@@ -1,5 +1,5 @@
 """Week 8 slow tests: the two-tower model and the full pipeline on MovieLens-1M (GPU recommended).
-    pytest tests/w8 -m slow -s        (~1-2 min on an RTX 3060 for the reference solution)"""
+    pytest tests/w8 -m "slow and not stretch" -s     (~1 min on an RTX 3060 for the reference solution)"""
 import numpy as np
 import pytest
 import torch
