@@ -117,6 +117,7 @@ $$\mathrm{AUC} = \frac{\sum_{i\in\text{pos}}\mathrm{rank}_i - \frac{n_+(n_++1)}{
 <p>where ranks are 1-based over all scores, and tied scores get the <em>average</em> of the ranks they span. Why it works: the rank of a positive counts how many items it beats (plus itself); subtracting $n_+(n_++1)/2$ removes positive-vs-positive comparisons. Sort once: $O(n\log n)$. The naive double loop over pairs is $O(n_+n_-)$, which is $10^{10}$ operations on the 400k-row speed test.</p>
 <p>AUC is threshold-free and insensitive to class balance, which makes it great for comparing rankers and terrible for judging the operating point you'll deploy.</p>
 <div class="callout pitfall"><b>Imbalance</b>With 1% fraud, "always predict legit" is 99% accurate. ROC-AUC can still look good while precision at any useful recall is poor, because FPR divides by the huge negative count. Use precision–recall curves (PR-AUC) and report precision at the recall you need.</div>
+<div class="widget" data-widget="roc"></div>
 <h3>Calibration and log-loss</h3>
 <p>A classifier is <em>calibrated</em> if among examples it scores 0.8, 80% are positive. AUC ignores calibration (any monotone transform of scores has the same AUC); log-loss rewards it. Calibration matters whenever the probability is used downstream: expected-value decisions, bidding in ads, combining models. Your <code>log_loss</code> clips $p$ to $[\epsilon, 1-\epsilon]$ because $\log 0 = -\infty$ would make one confident mistake infinitely bad.</p>
 
@@ -181,6 +182,7 @@ $$F \leftarrow F - \eta\,\nabla_F L,\qquad (\nabla_F L)_i = \frac{\partial\ell(y
 <li><strong>Squared loss</strong> $\ell = \frac12(y-F)^2$: $r_i = y_i - F_i$, the plain residual. Each tree fits what the ensemble still gets wrong. Start from $F_0 = \bar y$.</li>
 <li><strong>Log-loss</strong> with $F$ = log-odds, $p = \sigma(F)$: $\ell = -[y\log p + (1-y)\log(1-p)]$ and $r_i = y_i - p_i$. Start from $F_0 = \log\frac{\bar y}{1-\bar y}$ (the test checks <code>init_</code>).</li>
 </ul>
+<div class="widget" data-widget="boost"></div>
 <h3>Newton leaf values</h3>
 <p>The tree's structure comes from fitting $r$ with squared error, but its leaf values can be chosen better. For leaf $R_j$, find the constant $\gamma$ minimizing $\sum_{i\in R_j}\ell(y_i, F_i + \gamma)$. Second-order Taylor expansion with gradient $g_i = p_i - y_i = -r_i$ and Hessian $h_i = p_i(1-p_i)$:</p>
 $$\sum_{i\in R_j}\Big[\ell_i + g_i\gamma + \tfrac12 h_i\gamma^2\Big]\ \Rightarrow\ \gamma^* = -\frac{\sum g_i}{\sum h_i} = \frac{\sum_{i\in R_j} r_i}{\sum_{i\in R_j} p_i(1-p_i)}.$$
@@ -234,6 +236,7 @@ $$\sum_{i\in R_j}\Big[\ell_i + g_i\gamma + \tfrac12 h_i\gamma^2\Big]\ \Rightarro
 </ol>
 <p>Each step can only lower $J$, and there are finitely many assignments, so it converges, to a <em>local</em> minimum that depends on the start. Hence multiple restarts (<code>n_init</code>) keeping the lowest inertia.</p>
 <p><strong>Vectorize distances.</strong> $\|x-\mu\|^2 = \|x\|^2 - 2x^\top\mu + \|\mu\|^2$ turns all $n\times k$ distances into one matmul. Clip at zero: rounding can make tiny distances negative.</p>
+<div class="widget" data-widget="kmeans"></div>
 <h3>k-means++</h3>
 <p>Pick the first center uniformly from the data; each next center is a data point sampled with probability proportional to $D(x)^2$, its squared distance to the nearest center chosen so far. Far-away points are likely picks, so seeds spread across clusters. Arthur & Vassilvitskii proved the expected inertia is within $O(\log k)$ of optimal before any Lloyd iterations. The test plants one point at 100 among 999 at 0: the second seed must be the outlier (probability ≈ 1).</p>
 <div class="callout pitfall"><b>Empty clusters</b>A center can lose all its points. Its mean is then undefined (numpy gives NaN with a warning). Re-seed it, e.g. at the point currently farthest from its assigned center.</div>

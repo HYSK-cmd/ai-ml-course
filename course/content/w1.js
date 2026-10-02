@@ -51,6 +51,7 @@ $$Ax = x_1 a_1 + x_2 a_2 + \cdots + x_n a_n.$$
 
 <div class="callout"><b>Shape discipline</b>In code you will almost always work with <em>batches as rows</em>: $X \in \mathbb{R}^{N\times d}$, one example per row. A linear layer is then $Y = XW^\top + b$ with $W\in\mathbb{R}^{d_{out}\times d_{in}}$ (PyTorch's convention, and yours in Week 3). Say the shapes out loud before writing any line: "$N{\times}d_{in}$ times $d_{in}{\times}d_{out}$ gives $N{\times}d_{out}$". Most bugs in this course will be shape bugs that numpy broadcasting silently "fixed".</div>
 
+<div class="widget" data-widget="linmap"></div>
 <h2>Column space, null space, rank</h2>
 <p>The <strong>column space</strong> $\mathcal{C}(A) = \{Ax\}$ is the set of all outputs. The <strong>null space</strong> $\mathcal{N}(A) = \{x : Ax = 0\}$ is the set of inputs that get crushed to zero. The <strong>rank</strong> is the dimension of the column space: the number of linearly independent columns (which always equals the number of independent rows).</p>
 <p>The rank–nullity theorem says $\mathrm{rank}(A) + \dim\mathcal{N}(A) = n$: every input dimension either survives into the output or gets crushed. Why you care:</p>
@@ -304,6 +305,7 @@ $$H(p,q) = H(p) + \mathrm{KL}(p\|q).$$
 <p>Where the asymmetry of KL matters: $\mathrm{KL}(p\|q)$ (forward) punishes $q$ for putting low mass where $p$ has mass, so $q$ spreads to cover every mode ("mean-seeking"). $\mathrm{KL}(q\|p)$ (reverse, used in variational inference and RLHF's KL penalty) punishes $q$ for mass where $p$ has little, so $q$ picks one mode ("mode-seeking").</p>
 
 <div class="callout prod"><b>In production</b>Drift monitoring (Week 6) uses PSI, which is a symmetrized KL between binned feature distributions: $\sum(a-e)\ln(a/e) = \mathrm{KL}(a\|e) + \mathrm{KL}(e\|a)$. Calibration, label smoothing, distillation (KL between teacher and student) and the "logQ correction" in Week 8 all live in this vocabulary.</div>
+<div class="widget" data-widget="kl"></div>
 `,
       quiz: [
         { q: "Your regression targets have rare, huge outliers. Under the likelihood view, switching from MSE to MAE (L1) corresponds to assuming noise that is…", options: ["Gaussian with bigger variance", "Laplace (heavier tails)", "Uniform", "Bernoulli"], answer: 1, why: "$-\\log$ of a Laplace density is $|y-f|/b$ + const. Heavier tails make big residuals less surprising, so they don't dominate the fit." },

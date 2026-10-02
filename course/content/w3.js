@@ -210,6 +210,7 @@ $$\bar x_n = \frac{1}{\sigma}\Big(\bar{\hat x}_n - \frac1N\sum_m\bar{\hat x}_m -
 $$Y[n,o,i,j] = b_o + \sum_{c}\sum_{u,v} W[o,c,u,v]\;X_{pad}[n,c,\,i s+u,\,j s+v].$$
 <p>Output size: $H_{out} = \lfloor (H + 2p - k)/s\rfloor + 1$. "Same" padding for stride 1 is $p = (k-1)/2$.</p>
 
+<div class="widget" data-widget="conv"></div>
 <h2>im2col: convolution as one matmul</h2>
 <p>Loops over output positions in Python are hopeless (the test's naive reference does it, slowly, on tiny inputs). The trick every framework used before cuDNN: unfold each $C\times k\times k$ patch into a row. For $N$ images with $H_oW_o$ positions:</p>
 $$\underbrace{\mathrm{cols}}_{(N H_o W_o)\times(C k^2)}\ \times\ \underbrace{W_{mat}^\top}_{(C k^2)\times C_{out}}\ =\ \underbrace{Y}_{(N H_o W_o)\times C_{out}}\ \to\ \text{reshape to } (N, C_{out}, H_o, W_o).$$

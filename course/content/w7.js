@@ -100,6 +100,7 @@ COURSE.weeks.push({
 <li><strong>Multi-leader</strong>: writes accepted in several regions; conflicts must be resolved (last-writer-wins, CRDTs).</li>
 <li><strong>Leaderless</strong> (Dynamo, Cassandra): clients write to $W$ of $N$ replicas and read from $R$. If $R + W > N$, every read set intersects every write set, so a read sees the latest acknowledged write (with versioning to pick it). $N=3, W=2, R=2$ is the classic setting; $W=1, R=1$ is fast but eventually consistent.</li>
 </ul>
+<div class="widget" data-widget="quorum"></div>
 <h3>Consistency models (strongest to weakest)</h3>
 <ul>
 <li><strong>Linearizable</strong>: behaves like a single copy; once a write is acknowledged, every later read sees it.</li>
@@ -241,6 +242,7 @@ $$p \approx \big(1 - e^{-kn/m}\big)^k.$$
 </table>
 <h3>Token bucket</h3>
 <p>Capacity $b$, refill rate $r$ tokens/s. On each request, lazily refill: <code>tokens = min(b, tokens + (now - last)*r)</code>; allow if <code>tokens >= cost</code> and subtract. No timers. <code>retry_after = (cost - tokens)/r</code> fills the HTTP <code>Retry-After</code> header. The check-and-update must hold a lock: two threads reading "1 token left" would both pass (the test hammers it from 8 threads and demands exactly 1,000 allowed).</p>
+<div class="widget" data-widget="bucket"></div>
 <h3>Sliding windows</h3>
 <p>Fixed windows let a client send the full limit at 0.9 s and again at 1.1 s: 2× the limit in 0.2 s. The <strong>log</strong> keeps every allowed timestamp in a deque, evicts those older than the window, allows if fewer than the limit remain: exact. The <strong>counter</strong> (Cloudflare's) keeps only this window's and the previous window's counts and estimates</p>
 $$\text{estimate} = \text{prev}\times\Big(1 - \frac{\text{elapsed in current window}}{\text{window}}\Big) + \text{current},$$

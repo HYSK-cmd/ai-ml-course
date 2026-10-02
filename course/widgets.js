@@ -441,7 +441,387 @@
     return draw;
   }
 
-  const REGISTRY = { gd, svd, backprop, biasvar, init, attention, batching, ring, abpower };
+  // ------------------------------------------------------------------ extra visual-intuition widgets
+  const erf = (x) => { const s = Math.sign(x); x = Math.abs(x); const t = 1 / (1 + 0.3275911 * x); return s * (1 - ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x)); };
+  const Phi2 = (x) => 0.5 * (1 + erf(x / Math.SQRT2));
+  const pdf = (x, m, s) => Math.exp(-0.5 * ((x - m) / s) ** 2) / (s * Math.sqrt(2 * Math.PI));
+  const button = (label, fn) => { const b = el("button", { type: "button", class: "ghost", text: label }); b.addEventListener("click", fn); return b; };
+  const bg = (cv, C) => { cv.ctx.fillStyle = C.paper; cv.ctx.fillRect(0, 0, cv.w, cv.h); };
+  const arrow2 = (ctx, [x0, y0], [x1, y1], col, label) => {
+    ctx.strokeStyle = ctx.fillStyle = col; ctx.lineWidth = 2.4; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+    const an = Math.atan2(y1 - y0, x1 - x0); ctx.beginPath(); ctx.moveTo(x1, y1);
+    ctx.lineTo(x1 - 9 * Math.cos(an - 0.4), y1 - 9 * Math.sin(an - 0.4)); ctx.lineTo(x1 - 9 * Math.cos(an + 0.4), y1 - 9 * Math.sin(an + 0.4)); ctx.fill();
+    if (label) { ctx.font = MONO; ctx.fillText(label, x1 + 6, y1 - 6); }
+  };
+
+  // w1l1: a 2x2 matrix as a map of the plane
+  function linmap(root) {
+    const { controls, readout } = frame(root, "A matrix is a function — set its entries and watch the grid move");
+    const S = ["a", "b", "c", "d"].map((n, i) => slider(n, -2, 2, 0.05, [1, 0, 0, 1][i], (v) => v.toFixed(2)));
+    const P = { id: [1, 0, 0, 1], rot: [0.87, -0.5, 0.5, 0.87], shear: [1, 1, 0, 1], stretch: [1.8, 0, 0, 0.6], sing: [1, 2, 0.5, 1] };
+    const pre = select("preset", [["id", "identity"], ["rot", "rotate 30°"], ["shear", "shear"], ["stretch", "stretch"], ["sing", "singular (rank 1)"]], "id");
+    pre.input.addEventListener("input", () => P[pre.get()].forEach((v, i) => { S[i].input.value = v; S[i].input.dispatchEvent(new Event("input")); }));
+    controls.append(pre.wrap, ...S.map((s) => s.wrap));
+    const cv = canvas(640, 340);
+    root.append(controls, cv.c, readout);
+    function draw() {
+      const C = colors(), { ctx, w, h } = cv, [a, b, c, d] = S.map((s) => s.get()), u = 36;
+      const T = (x, y) => [w / 2 + u * (a * x + b * y), h / 2 - u * (c * x + d * y)];
+      const O = (x, y) => [w / 2 + u * x, h / 2 - u * y];
+      bg(cv, C);
+      const grid = (f, col, al) => { ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.globalAlpha = al; for (let k = -8; k <= 8; k++) { ctx.beginPath(); ctx.moveTo(...f(k, -8)); ctx.lineTo(...f(k, 8)); ctx.moveTo(...f(-8, k)); ctx.lineTo(...f(8, k)); ctx.stroke(); } ctx.globalAlpha = 1; };
+      grid(O, C.ink3, 0.25); grid(T, C.accent, 0.5);
+      ctx.beginPath(); [[0, 0], [1, 0], [1, 1], [0, 1]].forEach(([x, y], i) => ctx.lineTo(...T(x, y))); ctx.closePath(); ctx.fillStyle = C.accent; ctx.globalAlpha = 0.25; ctx.fill(); ctx.globalAlpha = 1;
+      arrow2(ctx, O(0, 0), T(1, 0), PALETTE[0], "A·e₁"); arrow2(ctx, O(0, 0), T(0, 1), PALETTE[1], "A·e₂");
+      const det = a * d - b * c, rank = Math.abs(det) > 0.02 ? 2 : (a || b || c || d ? 1 : 0);
+      readout.textContent = `columns of A are where e₁ and e₂ land: (${a.toFixed(2)}, ${c.toFixed(2)}) and (${b.toFixed(2)}, ${d.toFixed(2)}) · det = ${det.toFixed(2)} (areas scale by ${Math.abs(det).toFixed(2)}${det < 0 ? ", orientation flips" : ""}) · rank ${rank}${rank < 2 ? " — the plane is squashed onto a line" : ""}`;
+    }
+    S.forEach((s) => s.input.addEventListener("input", draw));
+    return draw;
+  }
+
+  // w1l4: forward vs reverse KL between two Gaussians
+  function kl(root) {
+    const { controls, readout } = frame(root, "KL divergence is asymmetric — p is fixed at N(0,1); move q");
+    const mu = slider("q mean", -4, 4, 0.1, 1.5, (v) => v.toFixed(1)), sg = slider("q σ", 0.3, 3, 0.05, 0.6, (v) => v.toFixed(2));
+    controls.append(mu.wrap, sg.wrap);
+    const cv = canvas(640, 260);
+    root.append(controls, cv.c, readout);
+    function draw() {
+      const C = colors(), { ctx, w, h } = cv, m = mu.get(), s = sg.get();
+      const X = (x) => w / 2 + x * (w / 2 - 30) / 6, Y = (y) => h - 26 - y * (h - 50) / 1.4;
+      bg(cv, C);
+      ctx.strokeStyle = C.rule; ctx.beginPath(); ctx.moveTo(20, Y(0)); ctx.lineTo(w - 20, Y(0)); ctx.stroke();
+      const curve = (mm, ss, col) => {
+        ctx.beginPath(); for (let i = 0; i <= 240; i++) { const x = -6 + 12 * i / 240; i ? ctx.lineTo(X(x), Y(pdf(x, mm, ss))) : ctx.moveTo(X(x), Y(pdf(x, mm, ss))); }
+        ctx.strokeStyle = col; ctx.lineWidth = 2.2; ctx.stroke(); ctx.lineTo(X(6), Y(0)); ctx.lineTo(X(-6), Y(0)); ctx.fillStyle = col; ctx.globalAlpha = 0.18; ctx.fill(); ctx.globalAlpha = 1;
+      };
+      curve(0, 1, PALETTE[0]); curve(m, s, PALETTE[1]);
+      ctx.font = MONO; ctx.fillStyle = PALETTE[0]; ctx.fillText("p = N(0,1)", 24, 16); ctx.fillStyle = PALETTE[1]; ctx.fillText(`q = N(${m.toFixed(1)}, ${s.toFixed(2)}²)`, 24, 32);
+      const fwd = Math.log(s) + (1 + m * m) / (2 * s * s) - 0.5, rev = -Math.log(s) + (s * s + m * m) / 2 - 0.5;
+      readout.textContent = `KL(p‖q) = ${fwd.toFixed(3)} nats (forward: punishes q for missing mass where p lives — try small σ)   ·   KL(q‖p) = ${rev.toFixed(3)} (reverse: punishes q for putting mass where p has none — try a far mean)`;
+    }
+    [mu, sg].forEach((c) => c.input.addEventListener("input", draw));
+    return draw;
+  }
+
+  // w2l2: threshold, ROC and the base-rate trap
+  function roc(root) {
+    const { controls, readout } = frame(root, "Threshold, ROC and precision — slide the threshold, then change the base rate");
+    const dd = slider("separation d", 0, 4, 0.1, 1.5, (v) => v.toFixed(1)), t = slider("threshold", -3, 6, 0.05, 0.8, (v) => v.toFixed(2)), pi = slider("positive rate", 0.01, 0.5, 0.01, 0.1, (v) => (100 * v).toFixed(0) + "%");
+    controls.append(dd.wrap, t.wrap, pi.wrap);
+    const cv = canvas(640, 300);
+    root.append(controls, cv.c, readout);
+    function draw() {
+      const C = colors(), { ctx, w, h } = cv, d = dd.get(), th = t.get(), p = pi.get();
+      bg(cv, C);
+      const lo = -4, hi = d + 4, X = (x) => 10 + (x - lo) / (hi - lo) * 300, Y = (y) => 270 - y * 220 / 0.45;
+      const dens = (m, col, from) => {
+        ctx.beginPath(); for (let i = 0; i <= 150; i++) { const x = lo + (hi - lo) * i / 150; i ? ctx.lineTo(X(x), Y(pdf(x, m, 1))) : ctx.moveTo(X(x), Y(pdf(x, m, 1))); }
+        ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(X(th), Y(0)); for (let i = 0; i <= 80; i++) { const x = th + (hi - th) * i / 80; ctx.lineTo(X(x), Y(pdf(x, m, 1))); } ctx.lineTo(X(hi), Y(0)); ctx.fillStyle = from; ctx.globalAlpha = 0.35; ctx.fill(); ctx.globalAlpha = 1;
+      };
+      dens(0, C.ink3, C.bad); dens(d, PALETTE[1], C.ok);
+      ctx.strokeStyle = C.ink; ctx.setLineDash([4, 4]); ctx.beginPath(); ctx.moveTo(X(th), Y(0)); ctx.lineTo(X(th), 30); ctx.stroke(); ctx.setLineDash([]);
+      ctx.font = MONO; ctx.fillStyle = C.ink3; ctx.fillText("negatives", 12, 18); ctx.fillStyle = PALETTE[1]; ctx.fillText("positives", 90, 18);
+      ctx.fillStyle = C.bad; ctx.fillText("red = false positives", 12, 292); ctx.fillStyle = C.ok; ctx.fillText("green = caught", 170, 292);
+      const RX = (f) => 360 + f * 250, RY = (v) => 270 - v * 240;
+      ctx.strokeStyle = C.rule; ctx.strokeRect(RX(0), RY(1), 250, 240); ctx.setLineDash([3, 4]); ctx.beginPath(); ctx.moveTo(RX(0), RY(0)); ctx.lineTo(RX(1), RY(1)); ctx.stroke(); ctx.setLineDash([]);
+      ctx.beginPath(); for (let k = 0; k <= 120; k++) { const tt = lo + (hi - lo) * k / 120, f = 1 - Phi2(tt), v = 1 - Phi2(tt - d); k ? ctx.lineTo(RX(f), RY(v)) : ctx.moveTo(RX(f), RY(v)); }
+      ctx.strokeStyle = C.accent; ctx.lineWidth = 2.2; ctx.stroke();
+      const fpr = 1 - Phi2(th), tpr = 1 - Phi2(th - d);
+      ctx.beginPath(); ctx.arc(RX(fpr), RY(tpr), 5, 0, 7); ctx.fillStyle = C.warn; ctx.fill();
+      ctx.fillStyle = C.ink3; ctx.fillText("FPR →", RX(0.78), 288); ctx.fillText("TPR", 330, 24);
+      const prec = tpr * p / (tpr * p + fpr * (1 - p) || 1), acc = tpr * p + (1 - fpr) * (1 - p);
+      readout.textContent = `TPR ${tpr.toFixed(2)} · FPR ${fpr.toFixed(3)} · precision ${prec.toFixed(2)} · accuracy ${acc.toFixed(3)} · AUC ${Phi2(d / Math.SQRT2).toFixed(3)}. Precision depends on the base rate; AUC doesn't — drop "positive rate" to 1% and watch precision collapse at a fixed threshold.`;
+    }
+    [dd, t, pi].forEach((c) => c.input.addEventListener("input", draw));
+    return draw;
+  }
+
+  // w2l3: gradient boosting with stumps
+  function boost(root) {
+    const { controls, readout } = frame(root, "Gradient boosting with stumps — each round fits the current residuals");
+    const rounds = slider("rounds", 0, 80, 1, 5), lr = slider("learning rate", 0.05, 1, 0.05, 0.5, (v) => v.toFixed(2));
+    controls.append(rounds.wrap, lr.wrap);
+    const cv = canvas(640, 300);
+    root.append(controls, cv.c, readout);
+    const r = rng(7), n = 40, xs = Array.from({ length: n }, () => r() * 6).sort((a, b) => a - b), ys = xs.map((x) => Math.sin(x) + 0.3 * gauss(r));
+    function draw() {
+      const C = colors(), { ctx, w, h } = cv, T = rounds.get(), eta = lr.get();
+      const base = ys.reduce((a, b) => a + b) / n; let pred = ys.map(() => base); const st = [];
+      for (let t = 0; t < T; t++) {
+        const res = ys.map((y, i) => y - pred[i]); let best = null;
+        for (let k = 1; k < n; k++) {
+          let sl = 0, sr = 0; for (let i = 0; i < n; i++) i < k ? (sl += res[i]) : (sr += res[i]);
+          const ml = sl / k, mr = sr / (n - k), gain = sl * ml + sr * mr;
+          if (!best || gain > best.gain) best = { gain, s: (xs[k - 1] + xs[k]) / 2, l: ml, r: mr };
+        }
+        st.push(best); pred = pred.map((p, i) => p + eta * (xs[i] < best.s ? best.l : best.r));
+      }
+      const F = (x) => base + eta * st.reduce((a, s) => a + (x < s.s ? s.l : s.r), 0);
+      const X = (x) => 20 + x * (w - 40) / 6, Y = (y) => h / 2 - y * 100;
+      bg(cv, C);
+      ctx.strokeStyle = C.rule; ctx.beginPath(); ctx.moveTo(20, Y(0)); ctx.lineTo(w - 20, Y(0)); ctx.stroke();
+      ctx.setLineDash([5, 4]); ctx.strokeStyle = C.ink3; ctx.beginPath(); for (let i = 0; i <= 120; i++) { const x = 6 * i / 120; i ? ctx.lineTo(X(x), Y(Math.sin(x))) : ctx.moveTo(X(x), Y(Math.sin(x))); } ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = C.ink2; xs.forEach((x, i) => { ctx.beginPath(); ctx.arc(X(x), Y(ys[i]), 3, 0, 7); ctx.fill(); });
+      ctx.strokeStyle = C.accent; ctx.lineWidth = 2.4; ctx.beginPath(); for (let i = 0; i <= 300; i++) { const x = 6 * i / 300; i ? ctx.lineTo(X(x), Y(F(x))) : ctx.moveTo(X(x), Y(F(x))); } ctx.stroke();
+      ctx.font = MONO; ctx.fillStyle = C.ink3; ctx.fillText("dashed = true sin(x) · dots = noisy data · blue = ensemble", 24, 16);
+      const mse = ys.reduce((a, y, i) => a + (y - pred[i]) ** 2, 0) / n;
+      readout.textContent = `${T} stumps, lr ${eta.toFixed(2)} → train MSE ${mse.toFixed(3)} (noise floor ≈ 0.09). Too many rounds at high lr starts chasing noise; shrinkage trades more rounds for a smoother fit.`;
+    }
+    [rounds, lr].forEach((c) => c.input.addEventListener("input", draw));
+    return draw;
+  }
+
+  // w2l4: k-means, one Lloyd iteration per click
+  function kmeans(root) {
+    const { controls, readout } = frame(root, "k-means — alternate assign / update and watch the inertia fall");
+    const k = slider("k", 2, 6, 1, 3);
+    const r0 = rng(3), pts = [];
+    [[-1.6, -0.8], [1.5, -0.9], [0.1, 1.4], [-1.5, 1.2]].forEach(([cx, cy]) => { for (let i = 0; i < 45; i++) pts.push([cx + 0.55 * gauss(r0), cy + 0.55 * gauss(r0)]); });
+    let seed = 1, cent = [], it = 0;
+    const init = () => { const r = rng(seed++ * 7919); cent = Array.from({ length: k.get() }, () => pts[Math.floor(r() * pts.length)].slice()); it = 0; };
+    const assign = () => pts.map(([x, y]) => { let b = 0, bd = 1e9; cent.forEach(([cx, cy], j) => { const dd = (x - cx) ** 2 + (y - cy) ** 2; if (dd < bd) { bd = dd; b = j; } }); return b; });
+    controls.append(k.wrap, button("step", () => { const a = assign(); cent = cent.map((c, j) => { const m = pts.filter((_, i) => a[i] === j); return m.length ? [m.reduce((s, p) => s + p[0], 0) / m.length, m.reduce((s, p) => s + p[1], 0) / m.length] : c; }); it++; draw(); }), button("re-initialize", () => { init(); draw(); }));
+    const cv = canvas(640, 320);
+    root.append(controls, cv.c, readout);
+    init();
+    function draw() {
+      const C = colors(), { ctx, w, h } = cv, a = assign(), X = (x) => w / 2 + x * 85, Y = (y) => h / 2 - y * 85;
+      bg(cv, C);
+      pts.forEach(([x, y], i) => { ctx.beginPath(); ctx.arc(X(x), Y(y), 3.2, 0, 7); ctx.fillStyle = PALETTE[a[i]]; ctx.globalAlpha = 0.75; ctx.fill(); ctx.globalAlpha = 1; });
+      cent.forEach(([x, y], j) => { ctx.beginPath(); ctx.arc(X(x), Y(y), 8, 0, 7); ctx.fillStyle = PALETTE[j]; ctx.fill(); ctx.lineWidth = 2.5; ctx.strokeStyle = C.ink; ctx.stroke(); });
+      const inertia = pts.reduce((s, [x, y], i) => s + (x - cent[a[i]][0]) ** 2 + (y - cent[a[i]][1]) ** 2, 0);
+      readout.textContent = `iteration ${it} · inertia ${inertia.toFixed(1)} · "step" = assign every point to its nearest centroid, then move each centroid to its cluster mean. Re-initialize a few times: different starts can land in different local minima (that's why k-means++ exists).`;
+    }
+    k.input.addEventListener("input", () => { init(); draw(); });
+    return draw;
+  }
+
+  // w3l4: sliding-window convolution
+  function conv(root) {
+    const { controls, readout } = frame(root, "Convolution — slide the 3×3 kernel over an 8×8 image (valid padding, stride 1)");
+    const K = { vedge: [[-1, 0, 1], [-1, 0, 1], [-1, 0, 1]], hedge: [[-1, -1, -1], [0, 0, 0], [1, 1, 1]], blur: Array(3).fill(Array(3).fill(1 / 9)), sharp: [[0, -1, 0], [-1, 5, -1], [0, -1, 0]] };
+    const ker = select("kernel", [["vedge", "vertical edge"], ["hedge", "horizontal edge"], ["blur", "box blur"], ["sharp", "sharpen"]], "vedge"), pos = slider("output position", 0, 35, 1, 8);
+    controls.append(ker.wrap, pos.wrap);
+    const cv = canvas(640, 290);
+    root.append(controls, cv.c, readout);
+    const img = Array.from({ length: 8 }, (_, r) => Array.from({ length: 8 }, (_, c) => (r >= 2 && r <= 5 && c >= 2 && c <= 5 ? 1 : 0)));
+    function draw() {
+      const C = colors(), { ctx, w, h } = cv, k = K[ker.get()], p = pos.get(), pr = Math.floor(p / 6), pc = p % 6, S = 30;
+      const out = Array.from({ length: 6 }, (_, r) => Array.from({ length: 6 }, (_, c) => { let s = 0; for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) s += img[r + i][c + j] * k[i][j]; return s; }));
+      const mx = Math.max(0.01, ...out.flat().map(Math.abs));
+      bg(cv, C); ctx.font = "10px " + MONO.split("px ")[1]; ctx.textAlign = "center";
+      const cell = (x, y, s, v, fillCol, al, txt) => { ctx.globalAlpha = 1; ctx.strokeStyle = C.rule; ctx.strokeRect(x, y, s, s); ctx.globalAlpha = al; ctx.fillStyle = fillCol; ctx.fillRect(x, y, s, s); ctx.globalAlpha = 1; if (txt !== undefined) { ctx.fillStyle = C.ink; ctx.fillText(txt, x + s / 2, y + s / 2 + 3.5); } };
+      const fmt = (v) => (Number.isInteger(v) ? v : v.toFixed(2).replace(/^0\./, "."));
+      img.forEach((row, r) => row.forEach((v, c) => cell(20 + c * S, 25 + r * S, S, v, C.ink, 0.8 * v)));
+      k.forEach((row, i) => row.forEach((v, j) => cell(290 + j * 36, 90 + i * 36, 36, v, v >= 0 ? C.accent : C.bad, Math.min(1, Math.abs(v)) * 0.5, fmt(v))));
+      out.forEach((row, r) => row.forEach((v, c) => cell(410 + c * 36, 45 + r * 36, 36, v, v >= 0 ? C.accent : C.bad, Math.min(1, Math.abs(v) / mx) * 0.85, fmt(+v.toFixed(2)))));
+      ctx.strokeStyle = C.warn; ctx.lineWidth = 2.5; ctx.strokeRect(20 + pc * S, 25 + pr * S, 3 * S, 3 * S); ctx.strokeRect(410 + pc * 36, 45 + pr * 36, 36, 36);
+      ctx.fillStyle = C.ink3; ctx.textAlign = "left"; ctx.font = MONO; ctx.fillText("input", 20, 16); ctx.fillText("kernel", 290, 80); ctx.fillText("output (6×6)", 410, 36);
+      const terms = []; for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) if (img[pr + i][pc + j]) terms.push(fmt(+k[i][j].toFixed(2)));
+      readout.textContent = `out[${pr},${pc}] = Σ patch ⊙ kernel = ${terms.length ? terms.join(" + ").replace(/\+ -/g, "- ") : "0"} = ${out[pr][pc].toFixed(2)} — the same 9 weights are reused at every position (weight sharing), and the edge kernel only fires where the patch straddles the square's border.`;
+    }
+    [ker, pos].forEach((c) => c.input.addEventListener("input", draw));
+    return draw;
+  }
+
+  // w4l2: byte-pair encoding merges
+  function bpe(root) {
+    const { controls, readout } = frame(root, "Byte-pair encoding — repeatedly merge the most frequent adjacent pair");
+    const txt = el("input", { type: "text", value: "low low low low low lower lower newest newest newest newest newest newest widest widest widest" });
+    txt.style.width = "100%";
+    const m = slider("merges", 0, 15, 1, 4);
+    controls.append(el("label", {}, el("span", { text: "corpus" }), txt), m.wrap);
+    const out = el("div");
+    root.append(controls, out, readout);
+    const chip = "display:inline-block;border:1px solid var(--rule);border-radius:4px;padding:0 .35rem;margin:0 .15rem .2rem 0;background:var(--paper);font-family:var(--font-mono)";
+    function draw() {
+      const words = {}; txt.value.trim().split(/\s+/).filter(Boolean).forEach((x) => (words[x] = (words[x] || 0) + 1));
+      const toks = Object.entries(words).map(([x, c]) => ({ x, c, t: [...x] })), merges = [];
+      for (let i = 0; i < m.get(); i++) {
+        const cnt = {};
+        toks.forEach(({ t, c }) => { for (let j = 0; j < t.length - 1; j++) { const key = t[j] + "\u0001" + t[j + 1]; cnt[key] = (cnt[key] || 0) + c; } });
+        const top = Object.entries(cnt).sort((a, b) => b[1] - a[1])[0];
+        if (!top || top[1] < 2) break;
+        const [A, B] = top[0].split("\u0001"); merges.push(`${A}+${B}→${A + B} (×${top[1]})`);
+        toks.forEach((o) => { const nt = []; for (let j = 0; j < o.t.length; j++) { if (o.t[j] === A && o.t[j + 1] === B) { nt.push(A + B); j++; } else nt.push(o.t[j]); } o.t = nt; });
+      }
+      out.replaceChildren(...toks.map((o) => el("div", {}, el("span", { class: "readout", text: `${o.c}× `.padStart(4, " ") }), ...o.t.map((s) => el("span", { style: chip, text: s })))));
+      const total = toks.reduce((s, o) => s + o.t.length * o.c, 0);
+      readout.textContent = `${merges.length ? "merges so far: " + merges.join(", ") : "no merges yet: every character is a token"} · corpus length ${total} tokens. Frequent words collapse to one token first; rare words stay as pieces, so nothing is ever out-of-vocabulary.`;
+    }
+    [txt, m.input].forEach((c) => c.addEventListener("input", draw));
+    return draw;
+  }
+
+  // w4l4: temperature / top-k / top-p
+  function sampling(root) {
+    const { controls, readout } = frame(root, "Sampling — temperature, top-k and top-p reshape the next-token distribution");
+    const T = slider("temperature", 0.1, 2.5, 0.05, 1, (v) => v.toFixed(2)), K = slider("top-k", 1, 8, 1, 8), Pp = slider("top-p", 0.1, 1, 0.05, 1, (v) => v.toFixed(2));
+    controls.append(T.wrap, K.wrap, Pp.wrap);
+    const cv = canvas(640, 280);
+    root.append(controls, cv.c, readout);
+    const names = ["the", "a", "cat", "dog", "sat", "ran", "moon", "xylophone"], logits = [3.2, 2.9, 2.4, 2.0, 1.1, 0.8, -0.5, -2.0];
+    function draw() {
+      const C = colors(), { ctx, w, h } = cv, t = T.get(), e = logits.map((l) => Math.exp(l / t)), z = e.reduce((a, b) => a + b), p0 = e.map((v) => v / z);
+      let keep = p0.map((_, i) => i < K.get()); // logits are already sorted descending, so the first k are the top k
+      let s = p0.reduce((a, v, i) => a + (keep[i] ? v : 0), 0), cum = 0;
+      keep = keep.map((kp, i) => { if (!kp) return false; const inside = cum < Pp.get() - 1e-9 || cum === 0; cum += p0[i] / s; return inside; });
+      const s2 = p0.reduce((a, v, i) => a + (keep[i] ? v : 0), 0), p1 = p0.map((v, i) => (keep[i] ? v / s2 : 0));
+      bg(cv, C);
+      const bw = (w - 40) / names.length;
+      names.forEach((nm, i) => {
+        const x = 20 + i * bw, Y = (v) => h - 40 - v * (h - 70);
+        ctx.fillStyle = C.rule; ctx.fillRect(x + 6, Y(p0[i]), bw - 12, h - 40 - Y(p0[i]));
+        if (keep[i]) { ctx.fillStyle = C.accent; ctx.fillRect(x + 14, Y(p1[i]), bw - 28, h - 40 - Y(p1[i])); }
+        ctx.font = MONO; ctx.fillStyle = keep[i] ? C.ink : C.ink3; ctx.textAlign = "center"; ctx.fillText(nm, x + bw / 2, h - 22); ctx.fillText((100 * p1[i]).toFixed(0) + "%", x + bw / 2, Math.min(h - 8, Y(Math.max(p0[i], p1[i])) - 6)); ctx.textAlign = "left";
+      });
+      const H = -p1.reduce((a, v) => a + (v > 0 ? v * Math.log2(v) : 0), 0);
+      readout.textContent = `grey = softmax(logits / T), blue = what you can actually sample after top-k and top-p renormalization · ${keep.filter(Boolean).length} token(s) kept · entropy ${H.toFixed(2)} bits. T→0 is greedy; high T flattens toward uniform; top-p adapts the cut to how peaked the distribution is, top-k doesn't.`;
+    }
+    [T, K, Pp].forEach((c) => c.input.addEventListener("input", draw));
+    return draw;
+  }
+
+  // w5l4: Amdahl's law
+  function amdahl(root) {
+    const { controls, readout } = frame(root, "Amdahl's law — the serial fraction caps the speedup no matter how many workers");
+    const p = slider("parallel fraction", 0.5, 0.999, 0.001, 0.9, (v) => (100 * v).toFixed(1) + "%");
+    controls.append(p.wrap);
+    const cv = canvas(640, 260);
+    root.append(controls, cv.c, readout);
+    function draw() {
+      const C = colors(), { ctx, w, h } = cv, f = p.get(), S = (n) => 1 / (1 - f + f / n), cap = 1 / (1 - f), ymax = Math.min(1100, cap * 1.25);
+      const X = (n) => 40 + Math.log2(n) / 10 * (w - 70), Y = (v) => h - 30 - Math.min(v, ymax) / ymax * (h - 50);
+      bg(cv, C);
+      ctx.strokeStyle = C.rule; ctx.beginPath(); ctx.moveTo(40, Y(0)); ctx.lineTo(w - 20, Y(0)); ctx.stroke();
+      ctx.setLineDash([4, 4]); ctx.strokeStyle = C.ink3; ctx.beginPath(); for (let i = 0; i <= 100; i++) { const n = 2 ** (i / 10); i ? ctx.lineTo(X(n), Y(n)) : ctx.moveTo(X(n), Y(n)); } ctx.stroke();
+      ctx.strokeStyle = C.bad; ctx.beginPath(); ctx.moveTo(40, Y(cap)); ctx.lineTo(w - 20, Y(cap)); ctx.stroke(); ctx.setLineDash([]);
+      ctx.strokeStyle = C.accent; ctx.lineWidth = 2.4; ctx.beginPath(); for (let i = 0; i <= 100; i++) { const n = 2 ** (i / 10); i ? ctx.lineTo(X(n), Y(S(n))) : ctx.moveTo(X(n), Y(S(n))); } ctx.stroke();
+      ctx.font = MONO; ctx.fillStyle = C.bad; ctx.fillText(`limit 1/(1−p) = ${cap.toFixed(cap < 100 ? 1 : 0)}×`, 48, Y(cap) - 6);
+      ctx.fillStyle = C.ink3; ctx.fillText("dashed diagonal = ideal linear speedup", 48, 16); [1, 8, 64, 512].forEach((n) => ctx.fillText(String(n), X(n) - 6, h - 10));
+      readout.textContent = `speedup at 8 workers ${S(8).toFixed(2)}× · 64 workers ${S(64).toFixed(2)}× · 1024 workers ${S(1024).toFixed(2)}× · to go faster you must shrink the serial part (I/O, locks, the GIL-bound section), not add cores.`;
+    }
+    p.input.addEventListener("input", draw);
+    return draw;
+  }
+
+  // w6l4: why averages lie, and tail latency under fan-out
+  function latency(root) {
+    const { controls, readout } = frame(root, "Latency percentiles — the mean hides the tail, and fan-out amplifies it");
+    const q = slider("slow requests", 0, 0.1, 0.002, 0.02, (v) => (100 * v).toFixed(1) + "%"), fan = slider("calls per page", 1, 100, 1, 1);
+    controls.append(q.wrap, fan.wrap);
+    const cv = canvas(640, 280);
+    root.append(controls, cv.c, readout);
+    const r = rng(11), N = 4000, base = Array.from({ length: N }, () => 50 * Math.exp(0.25 * gauss(r))), u = Array.from({ length: N }, () => r());
+    function draw() {
+      const C = colors(), { ctx, w, h } = cv, f = q.get(), xs = base.map((b, i) => (u[i] < f ? b * 8 : b)), s = [...xs].sort((a, b) => a - b), at = (pc) => s[Math.min(N - 1, Math.floor(pc * N))], mean = xs.reduce((a, b) => a + b) / N;
+      const bins = new Array(70).fill(0); xs.forEach((x) => bins[Math.min(69, Math.floor(x / 10))]++);
+      const X = (ms) => 20 + ms / 700 * (w - 40), mx = Math.max(...bins);
+      bg(cv, C);
+      bins.forEach((c, i) => { const bh = c / mx * (h - 80); ctx.fillStyle = C.accent; ctx.globalAlpha = 0.55; ctx.fillRect(X(i * 10) + 1, h - 30 - bh, X(10) - 21, bh); ctx.globalAlpha = 1; });
+      ctx.font = MONO; [["mean", mean, C.warn, 14], ["p50", at(0.5), C.ok, 28], ["p95", at(0.95), C.bad, 42], ["p99", at(0.99), C.bad, 56]].forEach(([nm, v, col, ty]) => {
+        ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(X(v), h - 30); ctx.lineTo(X(v), ty + 4); ctx.stroke(); ctx.fillStyle = col; ctx.fillText(`${nm} ${v.toFixed(0)}ms`, X(v) + 4, ty);
+      });
+      ctx.fillStyle = C.ink3; ctx.fillText("0", 20, h - 12); ctx.fillText("700 ms", w - 62, h - 12);
+      const page = 1 - (1 - f) ** fan.get();
+      readout.textContent = `mean ${mean.toFixed(0)} ms looks fine while p99 is ${at(0.99).toFixed(0)} ms. With ${fan.get()} parallel call(s) per page, ${(100 * page).toFixed(1)}% of page loads hit at least one slow call: the per-request tail becomes the typical page experience.`;
+    }
+    [q, fan].forEach((c) => c.input.addEventListener("input", draw));
+    return draw;
+  }
+
+  // w7l2: read/write quorum overlap
+  function quorum(root) {
+    const { controls, readout } = frame(root, "Quorums — a read is guaranteed to see the latest write only if R + W > N");
+    const N = slider("N replicas", 3, 9, 1, 5), W = slider("W (write acks)", 1, 9, 1, 3), R = slider("R (read replicas)", 1, 9, 1, 2);
+    controls.append(N.wrap, W.wrap, R.wrap);
+    const cv = canvas(640, 190);
+    root.append(controls, cv.c, readout);
+    N.input.addEventListener("input", () => [W, R].forEach((s) => { s.input.max = N.get(); s.input.dispatchEvent(new Event("input")); }));
+    function draw() {
+      const C = colors(), { ctx, w, h } = cv, n = N.get(), wr = Math.min(W.get(), n), rd = Math.min(R.get(), n), gap = (w - 60) / n;
+      bg(cv, C); let both = 0;
+      for (let i = 0; i < n; i++) {
+        const inW = i < wr, inR = i >= n - rd, x = 30 + gap * (i + 0.5), y = 85; both += inW && inR;
+        ctx.beginPath(); ctx.arc(x, y, 24, 0, 7); ctx.fillStyle = inW ? PALETTE[0] : C.rule; ctx.globalAlpha = inW ? 0.8 : 0.5; ctx.fill(); ctx.globalAlpha = 1;
+        ctx.lineWidth = 4; ctx.strokeStyle = inR ? PALETTE[1] : "transparent"; ctx.stroke();
+        if (inW && inR) { ctx.fillStyle = C.paper; ctx.font = "bold 16px sans-serif"; ctx.textAlign = "center"; ctx.fillText("✓", x, y + 6); ctx.textAlign = "left"; }
+      }
+      ctx.font = MONO; ctx.fillStyle = PALETTE[0]; ctx.fillText("● wrote here (W)", 30, 150); ctx.fillStyle = PALETTE[1]; ctx.fillText("○ read from here (R) — worst-case placement", 190, 150); ctx.fillStyle = C.ok; ctx.fillText("✓ overlap", 30, 174);
+      readout.textContent = wr + rd > n ? `R + W = ${wr + rd} > N = ${n}: the sets must overlap (${both} replica${both === 1 ? "" : "s"}), so every read includes the newest write.` : `R + W = ${wr + rd} ≤ N = ${n}: the worst case has zero overlap — a read can miss the latest write (stale read). Larger R or W buys consistency with latency.`;
+    }
+    [N, W, R].forEach((c) => c.input.addEventListener("input", draw));
+    return draw;
+  }
+
+  // w7l4: token-bucket rate limiter
+  function bucket(root) {
+    const { controls, readout } = frame(root, "Token bucket — refill rate sets the average, capacity sets the burst");
+    const rate = slider("refill / s", 1, 20, 1, 5), cap = slider("capacity", 1, 60, 1, 20), pat = select("traffic", [["steady", "steady 8 req/s"], ["burst", "2 req/s + 40-request bursts"]], "burst");
+    controls.append(rate.wrap, cap.wrap, pat.wrap);
+    const cv = canvas(640, 260);
+    root.append(controls, cv.c, readout);
+    function draw() {
+      const C = colors(), { ctx, w, h } = cv, R = rate.get(), B = cap.get(), dt = 0.1, steps = 600, X = (i) => 40 + i / steps * (w - 60), Y = (v) => h - 30 - v / Math.max(B, 1) * (h - 60);
+      let tok = B, acc = 0, ok = 0, bad = 0; const lv = [], rej = [];
+      for (let i = 0; i < steps; i++) {
+        tok = Math.min(B, tok + R * dt);
+        let n; if (pat.get() === "steady") { acc += 8 * dt; n = Math.floor(acc); acc -= n; } else { acc += 2 * dt; n = Math.floor(acc); acc -= n; if (i === 100 || i === 350) n += 40; }
+        const a = Math.min(n, Math.floor(tok)); tok -= a; ok += a; bad += n - a; lv.push(tok); rej.push(n - a);
+      }
+      bg(cv, C);
+      ctx.strokeStyle = C.rule; ctx.beginPath(); ctx.moveTo(40, Y(0)); ctx.lineTo(w - 20, Y(0)); ctx.moveTo(40, Y(B)); ctx.lineTo(w - 20, Y(B)); ctx.stroke();
+      rej.forEach((n, i) => { if (n) { ctx.fillStyle = C.bad; ctx.globalAlpha = 0.7; ctx.fillRect(X(i) - 1, Y(0) - Math.min(n, 40) / 40 * (h - 60), 3, Math.min(n, 40) / 40 * (h - 60)); ctx.globalAlpha = 1; } });
+      ctx.strokeStyle = C.accent; ctx.lineWidth = 2.2; ctx.beginPath(); lv.forEach((v, i) => (i ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v)))); ctx.stroke();
+      ctx.font = MONO; ctx.fillStyle = C.accent; ctx.fillText("tokens in bucket", 46, 16); ctx.fillStyle = C.bad; ctx.fillText("red bars = rejected requests (429s)", 190, 16); ctx.fillStyle = C.ink3; ctx.fillText("0 s", 40, h - 10); ctx.fillText("60 s", w - 44, h - 10);
+      readout.textContent = `${ok} allowed · ${bad} rejected (${(100 * bad / (ok + bad)).toFixed(0)}%). Steady 8 req/s with refill ${R}: ${R >= 8 ? "sustainable, nothing rejected" : "the bucket drains once and then ~" + (8 - R) + " req/s are rejected forever"}. Bursts: a larger capacity absorbs them, a higher refill recovers faster.`;
+    }
+    [rate, cap, pat].forEach((c) => c.input.addEventListener("input", draw));
+    return draw;
+  }
+
+  // w8l3: IVF — nprobe trades recall against work
+  function ivf(root) {
+    const { controls, readout } = frame(root, "IVF index — probe more cells for higher recall, at the cost of scanning more vectors (click to move the query)");
+    const np = slider("nprobe", 1, 16, 1, 2);
+    controls.append(np.wrap, button("random query", () => { q = [rr(), rr()]; draw(); }));
+    const cv = canvas(640, 340);
+    root.append(controls, cv.c, readout);
+    const r = rng(5), rr = rng(99), N = 1500, L = 16, pts = [];
+    const centers = Array.from({ length: 14 }, () => [0.08 + 0.84 * r(), 0.08 + 0.84 * r()]);
+    for (let i = 0; i < N; i++) { const c = centers[i % 14]; pts.push([Math.min(1, Math.max(0, c[0] + 0.05 * gauss(r))), Math.min(1, Math.max(0, c[1] + 0.05 * gauss(r)))]); }
+    let cent = Array.from({ length: L }, (_, i) => pts[i * 91].slice()), cell = new Array(N).fill(0);
+    const d2 = (a, b) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2;
+    for (let it = 0; it < 10; it++) { // ponytail: plain Lloyd k-means for the coarse quantizer, no k-means++
+      pts.forEach((p, i) => { let b = 0; for (let j = 1; j < L; j++) if (d2(p, cent[j]) < d2(p, cent[b])) b = j; cell[i] = b; });
+      cent = cent.map((c, j) => { const m = pts.filter((_, i) => cell[i] === j); return m.length ? [m.reduce((s, p) => s + p[0], 0) / m.length, m.reduce((s, p) => s + p[1], 0) / m.length] : c; });
+    }
+    let q = [0.42, 0.5];
+    cv.c.addEventListener("pointerdown", (e) => { const b = cv.c.getBoundingClientRect(), s = cv.h - 20, ox = (cv.w - s) / 2; q = [Math.min(1, Math.max(0, ((e.clientX - b.left) / b.width * cv.w - ox) / s)), Math.min(1, Math.max(0, 1 - ((e.clientY - b.top) / b.height * cv.h - 10) / s))]; draw(); });
+    function draw() {
+      const C = colors(), { ctx, w, h } = cv, s = h - 20, ox = (w - s) / 2, X = (x) => ox + x * s, Y = (y) => 10 + (1 - y) * s;
+      const order = cent.map((c, j) => [d2(q, c), j]).sort((a, b) => a[0] - b[0]), probed = new Set(order.slice(0, np.get()).map((o) => o[1]));
+      const truth = new Set(pts.map((p, i) => [d2(q, p), i]).sort((a, b) => a[0] - b[0]).slice(0, 10).map((o) => o[1]));
+      bg(cv, C); ctx.strokeStyle = C.rule; ctx.strokeRect(ox, 10, s, s);
+      let scanned = 0, found = 0;
+      pts.forEach((p, i) => {
+        const on = probed.has(cell[i]); scanned += on;
+        ctx.globalAlpha = on ? 0.85 : 0.14; ctx.fillStyle = PALETTE[cell[i] % 10]; ctx.beginPath(); ctx.arc(X(p[0]), Y(p[1]), 2.2, 0, 7); ctx.fill(); ctx.globalAlpha = 1;
+        if (truth.has(i)) { found += on; ctx.strokeStyle = on ? C.ok : C.bad; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(X(p[0]), Y(p[1]), 5.5, 0, 7); ctx.stroke(); }
+      });
+      cent.forEach((c) => { ctx.fillStyle = C.ink; ctx.fillRect(X(c[0]) - 3, Y(c[1]) - 3, 6, 6); });
+      ctx.fillStyle = C.ink; ctx.font = "bold 20px sans-serif"; ctx.textAlign = "center"; ctx.fillText("★", X(q[0]), Y(q[1]) + 7); ctx.textAlign = "left";
+      ctx.font = MONO; ctx.fillStyle = C.ink3; ctx.fillText("■ = coarse centroid · ring = true 10-NN (green found, red missed)", 10, 14);
+      readout.textContent = `nprobe ${np.get()}/${L}: scanned ${(100 * scanned / N).toFixed(0)}% of vectors · recall@10 = ${found}/10. Only the cells nearest the query are searched, so a true neighbor sitting just across a cell border is missed until you raise nprobe.`;
+    }
+    np.input.addEventListener("input", draw);
+    return draw;
+  }
+
+  const REGISTRY = { gd, svd, backprop, biasvar, init, attention, batching, ring, abpower, linmap, kl, roc, boost, kmeans, conv, bpe, sampling, amdahl, latency, quorum, bucket, ivf };
   const live = new Set();
   window.ForgeWidgets = {
     mount(scope) {
@@ -449,7 +829,7 @@
       scope.querySelectorAll(".widget[data-widget]").forEach(node => {
         const make = REGISTRY[node.dataset.widget];
         if (!make) return;
-        try { const draw = make(node); live.add(draw); draw(); } catch (e) { node.textContent = "This widget failed to load."; }
+        try { const draw = make(node); live.add(draw); draw(); } catch (e) { console.error("widget " + node.dataset.widget, e); node.textContent = "This widget failed to load."; }
       });
     },
   };

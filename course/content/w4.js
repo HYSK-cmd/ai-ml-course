@@ -107,6 +107,7 @@ $$p(x_1,\dots,x_T) = \prod_{t=1}^T p(x_t\mid x_1,\dots,x_{t-1}).$$
 <p>GPT-2 also pre-splits text with a regex (words, numbers, punctuation, whitespace) so merges never cross word boundaries: no token for "dog." vs "dog!" variants. That's your stretch goal. Production tokenizers (tiktoken, SentencePiece) are this algorithm with fast data structures: a naive implementation re-scans the whole sequence per merge ($O(\text{merges}\times n)$), fine for 100k characters, painful for gigabytes.</p>
 <div class="callout"><b>The trade-off</b>Vocab size $V$ costs $2VC$ parameters if untied (embedding + head) and a $V$-way softmax per position. A larger $V$ makes sequences shorter (more text per context window, fewer attention FLOPs). GPT-2 uses 50,257; Llama 3 uses 128k. Your char model uses 65; a BPE-512 model on Shakespeare compresses text about 2× relative to bytes.</div>
 <div class="callout prod"><b>In production</b>Tokenization bugs are real incidents: mismatched tokenizer versions between training and serving, whitespace normalization differences, numbers split oddly (why LLMs are bad at arithmetic), and multilingual text costing 2–4× more tokens (and money) per word. Always version the tokenizer with the model, which is why your checkpoint stores both.</div>
+<div class="widget" data-widget="bpe"></div>
 `,
       quiz: [
         { q: "BPE has learned merges (a,b)→256 then (256,256)→257. How is 'abab' encoded?", options: ["[97,98,97,98]", "[256,256]", "[257]", "[256,97,98]"], answer: 2, why: "Apply merges in learned order: first ab→256 gives [256,256], then (256,256)→257." },
@@ -235,6 +236,7 @@ $$\text{bytes} = 2\ (\text{K and V})\times L\times T\times C\times\text{bytes pe
 </ul>
 <p>Order in your <code>sample_next</code>: divide by temperature, apply top-k then top-p, softmax, <code>torch.multinomial</code> with the provided generator (so seeded generation is reproducible, which the tests and the Week 6 server rely on).</p>
 <div class="callout prod"><b>In production</b>Serving systems split inference into <em>prefill</em> (process the prompt in one parallel pass, compute-bound) and <em>decode</em> (one token at a time, memory-bandwidth-bound, reading the whole KV cache and all weights per token). Batching many sequences' decode steps together amortizes the weight reads, which is exactly what your Week 6 dynamic batcher does at the request level.</div>
+<div class="widget" data-widget="sampling"></div>
 `,
       quiz: [
         { q: "KV cache size for one sequence: L=24, C=2048, T=2048, bf16?", options: ["≈ 100 MB", "≈ 400 MB", "≈ 800 MB", "≈ 4 GB"], answer: 1, why: "$2\\cdot24\\cdot2048\\cdot2048\\cdot2$ bytes ≈ 403 MB." },

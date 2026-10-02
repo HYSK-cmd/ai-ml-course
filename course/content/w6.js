@@ -208,6 +208,7 @@ CMD ["uvicorn", "serve.app:app_from_env", "--factory", "--host", "0.0.0.0", "--p
       body: R`
 <h2>Averages lie</h2>
 <p>If 99 requests take 10 ms and one takes 5 s, the mean is 60 ms, a number no user experienced. Tail latency matters because users and fan-out services hit the tail: a page that calls 100 backends sees each backend's p99 on almost every page load. Track p50 (typical), p95/p99 (tail) and set SLOs on them ("p99 &lt; 300 ms over 30 days").</p>
+<div class="widget" data-widget="latency"></div>
 <h2>Histograms and quantile estimation</h2>
 <p>Storing every latency is expensive; Prometheus instead counts observations into fixed buckets with upper bounds $le$, exported <strong>cumulatively</strong>:</p>
 <pre><code>request_latency_seconds_bucket{le="0.1"} 7      # observations ≤ 0.1 s

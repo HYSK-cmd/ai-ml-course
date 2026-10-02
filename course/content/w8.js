@@ -154,6 +154,7 @@ $$s^c_{rj} = \frac{u_r^\top v_j}{\tau} - \log q_j.$$
 <li><strong>Search</strong>: score the query against the $L$ centroids, take the top $n_{probe}$ lists, score only their vectors, return the top-$k$ (with <code>argpartition</code> then a small sort).</li>
 </ol>
 <p>Work per query ≈ $Ld + \frac{n_{probe}}{L}Nd$. Minimizing over $L$ gives $L\approx\sqrt{n_{probe}N}$, hence the $\sqrt N$ rule of thumb. Recall drops when a true neighbor lives in a list whose centroid is not among the $n_{probe}$ nearest, which happens near cluster boundaries; raising $n_{probe}$ trades speed for recall. The test (200k clustered vectors, 512 lists, n_probe 16) wants recall@10 ≥ 0.9 and ≥5× speedup per query over brute force. The reference gets 0.993 recall at 14× with contiguous slices, and only 5.5× when it gathered rows with fancy indexing (a copy per query): memory layout again.</p>
+<div class="widget" data-widget="ivf"></div>
 <h2>Product quantization (compression)</h2>
 <p>Billions of 128-d float vectors don't fit in RAM (512 GB). PQ splits each vector into $m$ sub-vectors, runs k-means with 256 centroids in each subspace, and stores each vector as $m$ one-byte codes: 128 floats (512 B) become e.g. 16 bytes. Distances are computed approximately from per-query lookup tables. IVF+PQ ("IVFPQ") is the classic billion-scale FAISS index.</p>
 <h2>HNSW (graphs)</h2>

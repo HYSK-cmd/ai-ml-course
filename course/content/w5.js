@@ -231,6 +231,7 @@ def test_log_softmax_is_shift_invariant(x, c):
 <tr><td>Big numpy/torch ops</td><td>just call them</td><td>already parallel in C (BLAS threads, CUDA)</td></tr>
 </table>
 <p>Your <code>parallel_map</code> uses processes, so <code>fn</code> must be picklable (a module-level function, not a lambda), and on Windows child processes re-import your module, which is why the test's helper is top-level. Python 3.13's experimental free-threaded build removes the GIL, but the ecosystem still assumes it.</p>
+<div class="widget" data-widget="amdahl"></div>
 <h2>asyncio in one page</h2>
 <p>An <code>async def</code> function returns a coroutine; <code>await</code> suspends it until the awaited thing is ready, letting the event loop run other coroutines. Everything runs on one thread, so:</p>
 <ul>
